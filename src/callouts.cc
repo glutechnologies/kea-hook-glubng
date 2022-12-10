@@ -1,5 +1,5 @@
 /* 
- * This file is part of the XXX distribution (https://github.com/glutechnologies/kea-hook-glubng).
+ * This file is part of the GluBNG distribution (https://github.com/glutechnologies/kea-hook-glubng).
  * Copyright (c) 2022 Glutec
  * 
  * This program is free software: you can redistribute it and/or modify  
@@ -22,6 +22,7 @@
 #include <dhcp/option6_ia.h>
 #include <dhcpsrv/subnet.h>
 #include <dhcpsrv/lease.h>
+#include <dhcpsrv/host.h>
 
 #include "nlohmann/json.hpp"
 #include "common.h"
@@ -30,6 +31,7 @@
 #include <vector>
 
 #include "socket.h"
+#include "logger.h"
 
 using namespace isc::dhcp;
 using namespace isc::hooks;
@@ -214,6 +216,41 @@ extern "C" {
     /* Send data to socket */
     int ret;
     ret = send_socket_data(msg);
+    return 0;
+  }
+
+  int host4_identifier(CalloutHandle& handle) {
+    std::string flex_id_str;
+    
+    handle.getContext("flex-id", flex_id_str);
+    LOG_INFO(glubng_logger, "flex-id host4 %1").arg(flex_id_str);
+    if (!flex_id_str.empty()) {
+      OptionBuffer flex_id(flex_id_str.begin(), flex_id_str.end());
+      handle.setArgument("id_value", flex_id);
+    }
+    return 0;
+  }
+
+  int pkt4_receive(CalloutHandle& handle) {
+    Pkt4Ptr query;
+    handle.getArgument("query4", query);
+
+    nlohmann::json msg, res;
+    msg["callout"] = CALLOUT_PKT4_CIRCUIT_ID;
+
+    // Process query
+    extract_pkt4(msg, query);
+
+    if (!msg["query"]["option82-circuit-id"].empty()) {
+      /* Send data to socket */
+      int ret;
+      ret = send_socket_data_receive(msg, true, res);
+
+      if (!res["flex-id"].empty()) {
+        // Store flex-id from GluBNGd
+        handle.setContext("flex-id", res["flex-id"].get<std::string>());
+      }
+    }
     return 0;
   }
 }

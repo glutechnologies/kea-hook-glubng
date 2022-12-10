@@ -1,5 +1,5 @@
 /* 
- * This file is part of the XXX distribution (https://github.com/glutechnologies/kea-hook-glubng).
+ * This file is part of the GluBNG distribution (https://github.com/glutechnologies/kea-hook-glubng).
  * Copyright (c) 2022 Glutec
  * 
  * This program is free software: you can redistribute it and/or modify  
@@ -32,7 +32,7 @@ using namespace isc::dhcp;
 using namespace isc::hooks;
 
 extern "C" {
-  int send_socket_data(const nlohmann::json &msg) {
+  int send_socket_data_receive(const nlohmann::json &msg, bool receive, nlohmann::json &rcv) {
     boost::asio::io_service io_service;
     boost::asio::local::stream_protocol::socket socket(io_service);
 
@@ -41,10 +41,25 @@ extern "C" {
       
       std::string res = msg.dump();
       boost::asio::write(socket, boost::asio::buffer(res.data(), res.size()));
+
+      if (receive) {
+        // We want to receive a response
+        boost::asio::streambuf buf;
+        boost::asio::read_until(socket, buf, "\0");
+
+        // Create a tmp istream buffer
+        std::istream itmp(&buf);
+        itmp >> rcv;
+      }
     } catch (std::exception &e) {
       LOG_ERROR(glubng_logger, GLUBNG_SOCKET_EXCEPTION).arg(e.what());
     }
 
     return 0;
+  }
+
+  int send_socket_data(const nlohmann::json &msg) {
+    nlohmann::json res;
+    return send_socket_data_receive(msg, false, res);
   }
 }

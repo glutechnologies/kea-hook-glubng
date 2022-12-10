@@ -1,5 +1,5 @@
 /* 
- * This file is part of the XXX distribution (https://github.com/glutechnologies/kea-hook-glubng).
+ * This file is part of the GluBNG distribution (https://github.com/glutechnologies/kea-hook-glubng).
  * Copyright (c) 2022 Glutec
  * 
  * This program is free software: you can redistribute it and/or modify  
@@ -29,6 +29,9 @@ extern "C" {
 
   /* Sends lease4 information using sockets */
   int send_socket_data(const nlohmann::json &msg);
+
+  /* Sends lease4 information using sockets and returns data */
+  int send_socket_data_receive(const nlohmann::json &msg, bool receive, nlohmann::json &res);
 
 }
 
