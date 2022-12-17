@@ -31,10 +31,10 @@
 
 extern "C" {
 
-/* From load.cc */
+  /* From load.cc */
 
-/* Socket address (filesystem). */
-extern std::string socket_name;
+  /* Socket address (filesystem). */
+  extern std::string socket_name;
 
 }
 

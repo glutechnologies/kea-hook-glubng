@@ -21,8 +21,11 @@
 #include <dhcp/pkt6.h>
 #include <dhcp/option6_ia.h>
 #include <dhcpsrv/subnet.h>
+#include <dhcpsrv/lease_mgr.h>
+#include <dhcpsrv/lease_mgr_factory.h>
 #include <dhcpsrv/lease.h>
 #include <dhcpsrv/host.h>
+#include <cc/data.h>
 
 #include "nlohmann/json.hpp"
 #include "common.h"
@@ -35,6 +38,7 @@
 
 using namespace isc::dhcp;
 using namespace isc::hooks;
+using namespace isc::data;
 
 extern "C" {
   void extract_pkt4(nlohmann::json &res, const Pkt4Ptr pkt4) {
@@ -92,6 +96,36 @@ extern "C" {
     res["lease"]["hostname"] = lease->hwaddr_->toText(false);
     res["lease"]["cltt"] = lease->cltt_;
     res["lease"]["valid-lft"] = lease->valid_lft_;
+  }
+
+  /// @brief Get DHCPv4 extended info.
+  ///
+  /// @param lease The lease to get extended info from.
+  /// @return The extended info or null.
+  inline static ConstElementPtr get_extended_info4(const Lease4Ptr& lease) {
+    ConstElementPtr user_context = lease->getContext();
+    if (!user_context || (user_context->getType() != Element::map)) {
+      return (ConstElementPtr());
+    }
+    ConstElementPtr isc = user_context->get("ISC");
+    if (!isc || (isc->getType() != Element::map)) {
+      return (ConstElementPtr());
+    }
+    return (isc->get("relay-agent-info"));
+  }
+
+  // https://www.rfc-editor.org/rfc/rfc3046
+  uint32_t parse_cid_from_string(const std::string& rai) {
+    std::string::const_iterator it = rai.begin();
+    OptionBuffer buf;
+    // Parse only cid
+    std::string cid_bytes_str(it+4, it+6);
+    int cid_bytes = std::stoi(cid_bytes_str, nullptr, 16);
+    LOG_INFO(glubng_logger, "ret cid_bytes %1").arg(cid_bytes);
+    std::string cid_str(it+6, it+6+(cid_bytes*2));
+    uint32_t ret = std::stoi(cid_str, nullptr, 16);
+    LOG_INFO(glubng_logger, "ret cid %1").arg(cid_str);
+    return ret;
   }
 
   int lease4_select(CalloutHandle& handle) {
@@ -221,17 +255,6 @@ extern "C" {
 
   int host4_identifier(CalloutHandle& handle) {
     std::string flex_id_str;
-    
-    handle.getContext("flex-id", flex_id_str);
-    LOG_INFO(glubng_logger, "flex-id host4 %1").arg(flex_id_str);
-    if (!flex_id_str.empty()) {
-      OptionBuffer flex_id(flex_id_str.begin(), flex_id_str.end());
-      handle.setArgument("id_value", flex_id);
-    }
-    return 0;
-  }
-
-  int pkt4_receive(CalloutHandle& handle) {
     Pkt4Ptr query;
     handle.getArgument("query4", query);
 
@@ -241,15 +264,37 @@ extern "C" {
     // Process query
     extract_pkt4(msg, query);
 
-    if (!msg["query"]["option82-circuit-id"].empty()) {
-      /* Send data to socket */
+    try {
+      if (msg["query"]["option82-circuit-id"].empty()) {
+        // Get all leases for given HW (MAC)
+        Lease4Collection leases4 = LeaseMgrFactory::instance().getLease4(HWAddr::fromText(msg["query"]["hw-addr"]));
+        // Usually only one lease, take first
+        if (!leases4.empty()) {
+          Lease4Ptr lease = leases4.front();
+          ConstElementPtr relay = get_extended_info4(lease);
+          if (relay) {
+            uint32_t cid = parse_cid_from_string(relay->stringValue());
+            std::stringstream stream;
+            // Send circuit-id in hex as string (JSON)
+            stream << "0x" << std::setfill('0') << std::setw(sizeof(uint32_t)*2) << std::hex << cid;
+            msg["query"]["option82-circuit-id"] = stream.str();
+          }
+        }
+      }
+
+      // Send data to socket
       int ret;
       ret = send_socket_data_receive(msg, true, res);
 
       if (!res["flex-id"].empty()) {
         // Store flex-id from GluBNGd
-        handle.setContext("flex-id", res["flex-id"].get<std::string>());
+        flex_id_str = res["flex-id"].get<std::string>();
+        LOG_INFO(glubng_logger, "flex-id host4 %1").arg(flex_id_str);
+        OptionBuffer flex_id(flex_id_str.begin(), flex_id_str.end());
+        handle.setArgument("id_value", flex_id);
       }
+    } catch (std::exception &e) {
+      LOG_WARN(glubng_logger, "processing rai from user-context %1").arg(e.what());
     }
     return 0;
   }
